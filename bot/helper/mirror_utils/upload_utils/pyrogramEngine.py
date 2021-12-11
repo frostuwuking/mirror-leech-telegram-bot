@@ -4,6 +4,7 @@ import time
 import threading
 
 from pyrogram.errors import FloodWait, RPCError
+from PIL import Image
 
 from bot import app, DOWNLOAD_DIR, AS_DOCUMENT, AS_DOC_USERS, AS_MEDIA_USERS, CUSTOM_FILENAME
 from bot.helper.ext_utils.fs_utils import take_ss, get_media_info
@@ -11,9 +12,9 @@ from bot.helper.ext_utils.fs_utils import take_ss, get_media_info
 LOGGER = logging.getLogger(__name__)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
-VIDEO_SUFFIXES = ("MKV", "MP4", "MOV", "WMV", "3GP", "MPG", "WEBM", "AVI", "FLV", "M4V")
+VIDEO_SUFFIXES = ("MKV", "MP4", "MOV", "WMV", "3GP", "MPG", "WEBM", "AVI", "FLV", "M4V", "GIF")
 AUDIO_SUFFIXES = ("MP3", "M4A", "M4B", "FLAC", "WAV", "AIF", "OGG", "AAC", "DTS", "MID", "AMR", "MKA")
-IMAGE_SUFFIXES = ("JPG", "JPX", "PNG", "GIF", "WEBP", "CR2", "TIF", "BMP", "JXR", "PSD", "ICO", "HEIC", "JPEG")
+IMAGE_SUFFIXES = ("JPG", "JPX", "PNG", "WEBP", "CR2", "TIF", "BMP", "JXR", "PSD", "ICO", "HEIC", "JPEG")
 
 
 class TgUploader:
@@ -36,10 +37,10 @@ class TgUploader:
         self.sent_msg = self.__app.get_messages(self.chat_id, self.message_id)
         self.msgs_dict = {}
         self.corrupted = 0
+        self.user_settings()
 
     def upload(self):
         path = f"{DOWNLOAD_DIR}{self.message_id}"
-        self.user_settings()
         for dirpath, subdir, files in sorted(os.walk(path)):
             for filee in sorted(files):
                 if self.is_cancelled:
@@ -49,6 +50,7 @@ class TgUploader:
                 up_path = os.path.join(dirpath, filee)
                 fsize = os.path.getsize(up_path)
                 if fsize == 0:
+                    LOGGER.error(f"{up_path} size is zero, telegram don't upload this file")
                     self.corrupted += 1
                     continue
                 self.upload_file(up_path, filee, dirpath)
@@ -82,6 +84,8 @@ class TgUploader:
                             if self.thumb is None and thumb is not None and os.path.lexists(thumb):
                                 os.remove(thumb)
                             return
+                    img = Image.open(thumb)
+                    width, height = img.size
                     if not filee.upper().endswith(("MKV", "MP4")):
                         filee = os.path.splitext(filee)[0] + '.mp4'
                         new_path = os.path.join(dirpath, filee)
@@ -92,8 +96,8 @@ class TgUploader:
                                                               caption=cap_mono,
                                                               parse_mode="html",
                                                               duration=duration,
-                                                              width=480,
-                                                              height=320,
+                                                              width=width,
+                                                              height=height,
                                                               thumb=thumb,
                                                               supports_streaming=True,
                                                               disable_notification=True,
@@ -134,12 +138,14 @@ class TgUploader:
                                                              disable_notification=True,
                                                              progress=self.upload_progress)
         except FloodWait as f:
-            LOGGER.info(f)
+            LOGGER.info(str(f))
             time.sleep(f.x)
         except RPCError as e:
-            LOGGER.error(str(e))
+            LOGGER.error(str(e) + str(up_path))
+        except Exception as err:
+            LOGGER.info(str(err))
             self.is_cancelled = True
-            self.__listener.onUploadError(str(e))
+            self.__listener.onUploadError(str(err))
         if self.thumb is None and thumb is not None and os.path.lexists(thumb):
             os.remove(thumb)
         if not self.is_cancelled:

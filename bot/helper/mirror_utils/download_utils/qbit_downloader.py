@@ -1,7 +1,3 @@
-# Implement By - @anasty17 (https://github.com/SlamDevs/slam-mirrorbot/commit/0bfba523f095ab1dccad431d72561e0e002e7a59)
-# (c) https://github.com/SlamDevs/slam-mirrorbot
-# All rights reserved
-
 import os
 import random
 import string
@@ -15,11 +11,11 @@ from torrentool.api import Torrent
 from telegram import InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 
-from bot import download_dict, download_dict_lock, BASE_URL, dispatcher, get_client, TORRENT_DIRECT_LIMIT, ZIP_UNZIP_LIMIT, STOP_DUPLICATE
+from bot import download_dict, download_dict_lock, BASE_URL, dispatcher, get_client, TORRENT_DIRECT_LIMIT, ZIP_UNZIP_LIMIT, STOP_DUPLICATE, WEB_PINCODE, QB_SEED
 from bot.helper.mirror_utils.status_utils.qbit_download_status import QbDownloadStatus
 from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
-from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, deleteMessage, sendStatusMessage
-from bot.helper.ext_utils.bot_utils import setInterval, MirrorStatus, getDownloadByGid, get_readable_file_size, new_thread
+from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, deleteMessage, sendStatusMessage, update_all_messages
+from bot.helper.ext_utils.bot_utils import setInterval, MirrorStatus, getDownloadByGid, get_readable_file_size, new_thread, get_readable_time
 from bot.helper.telegram_helper import button_build
 
 LOGGER = logging.getLogger(__name__)
@@ -34,6 +30,7 @@ class QbitTorrent:
         self.client = get_client()
         self.meta_time = time.time()
         self.stalled_time = time.time()
+        self.uploaded = False
         self.sizeChecked = False
         self.dupChecked = False
         self.is_file = False
@@ -81,10 +78,10 @@ class QbitTorrent:
                 return
             tor_info = tor_info[0]
             self.ext_hash = tor_info.hash
-            gid = ''.join(random.SystemRandom().choices(string.ascii_letters + string.digits, k=14))
+            self.gid = ''.join(random.SystemRandom().choices(string.ascii_letters + string.digits, k=14))
             with download_dict_lock:
-                download_dict[listener.uid] = QbDownloadStatus(gid, listener, self.ext_hash, self.client)
-            LOGGER.info(f"QbitDownload started: {tor_info.name} {self.ext_hash}")
+                download_dict[listener.uid] = QbDownloadStatus(self.gid, listener, self.ext_hash, self.client)
+            LOGGER.info(f"QbitDownload started: {tor_info.name} - Hash: {self.ext_hash}")
             self.updater = setInterval(self.update_interval, self.update)
             if BASE_URL is not None and qbitsel:
                 if not self.is_file:
@@ -104,6 +101,7 @@ class QbitTorrent:
                         except:
                             deleteMessage(listener.bot, meta)
                             return False
+                time.sleep(0.5)
                 self.client.torrents_pause(torrent_hashes=self.ext_hash)
                 for n in str(self.ext_hash):
                     if n.isdigit():
@@ -111,9 +109,12 @@ class QbitTorrent:
                     if len(self.pincode) == 4:
                         break
                 buttons = button_build.ButtonMaker()
-                buttons.buildbutton("Select Files", f"{BASE_URL}/app/files/{self.ext_hash}")
-                buttons.sbutton("Pincode", f"pin {gid} {self.pincode}")
-                buttons.sbutton("Done Selecting", f"done {gid} {self.ext_hash}")
+                if WEB_PINCODE:
+                    buttons.buildbutton("Select Files", f"{BASE_URL}/app/files/{self.ext_hash}")
+                    buttons.sbutton("Pincode", f"pin {self.gid} {self.pincode}")
+                else:
+                    buttons.buildbutton("Select Files", f"{BASE_URL}/app/files/{self.ext_hash}?pin_code={self.pincode}")
+                buttons.sbutton("Done Selecting", f"done {self.gid} {self.ext_hash}")
                 QBBUTTONS = InlineKeyboardMarkup(buttons.build_menu(2))
                 msg = "Your download paused. Choose files then press Done Selecting button to start downloading."
                 sendMarkup(msg, listener.bot, listener.update, QBBUTTONS)
@@ -121,7 +122,7 @@ class QbitTorrent:
                 sendStatusMessage(listener.update, listener.bot)
         except qba.UnsupportedMediaType415Error as e:
             LOGGER.error(str(e))
-            sendMessage("This is an unsupported/invalid link: {str(e)}", listener.bot, listener.update)
+            sendMessage(f"This is an unsupported/invalid link: {str(e)}", listener.bot, listener.update)
             self.client.auth_log_out()
         except Exception as e:
             sendMessage(str(e), listener.bot, listener.update)
@@ -135,6 +136,7 @@ class QbitTorrent:
                 self.client.auth_log_out()
                 self.updater.cancel()
             return
+        self.get_info = 0
         try:
             tor_info = tor_info[0]
             if tor_info.state == "metaDL":
@@ -150,7 +152,7 @@ class QbitTorrent:
                 self.stalled_time = time.time()
                 if STOP_DUPLICATE and not self.listener.isLeech and not self.dupChecked and os.path.isdir(f'{self.dire}'):
                     LOGGER.info('Checking File/Folder if already in Drive')
-                    qbname = str(os.listdir(f'{self.dire}')[0])
+                    qbname = str(os.listdir(f'{self.dire}')[-1])
                     if qbname.endswith('.!qB'):
                         qbname = os.path.splitext(qbname)[0]
                     if self.listener.isZip:
@@ -190,13 +192,17 @@ class QbitTorrent:
                             self.updater.cancel()
                     self.sizeChecked = True
             elif tor_info.state == "stalledDL":
-                if time.time() - self.stalled_time >= 999999999: # timeout after downloading metadata
+                if tor_info.downloaded >= tor_info.size and tor_info.progress >= 1:
+                    self.client.torrents_recheck(torrent_hashes=self.ext_hash)
+                elif time.time() - self.stalled_time >= 999999999: # timeout after downloading metadata
                     self.client.torrents_pause(torrent_hashes=self.ext_hash)
                     time.sleep(0.3)
                     self.listener.onDownloadError("Dead Torrent!")
                     self.client.torrents_delete(torrent_hashes=self.ext_hash)
                     self.client.auth_log_out()
                     self.updater.cancel()
+            elif tor_info.state == "missingFiles":
+                self.client.torrents_recheck(torrent_hashes=self.ext_hash)
             elif tor_info.state == "error":
                 self.client.torrents_pause(torrent_hashes=self.ext_hash)
                 time.sleep(0.3)
@@ -204,9 +210,10 @@ class QbitTorrent:
                 self.client.torrents_delete(torrent_hashes=self.ext_hash)
                 self.client.auth_log_out()
                 self.updater.cancel()
-            elif tor_info.state != "checkingUP" and (tor_info.state == "uploading" or \
-                                                     tor_info.state.lower().endswith("up")):
-                self.client.torrents_pause(torrent_hashes=self.ext_hash)
+            elif tor_info.state in ["uploading", "queuedUP", "stalledUP", "forcedUP"] and not self.uploaded:
+                self.uploaded = True
+                if not QB_SEED:
+                    self.client.torrents_pause(torrent_hashes=self.ext_hash)
                 if self.qbitsel:
                     for dirpath, subdir, files in os.walk(f"{self.dire}", topdown=False):
                         for filee in files:
@@ -219,14 +226,22 @@ class QbitTorrent:
                         if not os.listdir(dirpath):
                             os.rmdir(dirpath)
                 self.listener.onDownloadComplete()
+                if QB_SEED:
+                    with download_dict_lock:
+                        download_dict[self.listener.uid] = QbDownloadStatus(self.gid, self.listener, self.ext_hash, self.client)
+                    update_all_messages()
+                    LOGGER.info(f"Seeding started: {tor_info.name}")
+                else:
+                    self.client.torrents_delete(torrent_hashes=self.ext_hash)
+                    self.client.auth_log_out()
+                    self.updater.cancel()
+            elif tor_info.state == 'pausedUP' and QB_SEED:
+                self.listener.onUploadError(f"Seeding finished with Ratio: {round(tor_info.ratio, 3)} and Time: {get_readable_time(tor_info.seeding_time)}")
                 self.client.torrents_delete(torrent_hashes=self.ext_hash)
                 self.client.auth_log_out()
                 self.updater.cancel()
-        except (IndexError, NameError):
-            self.get_info += 1
-            if self.get_info > 10:
-                self.client.auth_log_out()
-                self.updater.cancel()
+        except:
+            pass
 
 def get_confirm(update, context):
     query = update.callback_query
@@ -249,10 +264,7 @@ def get_confirm(update, context):
 
 def get_hash_magnet(mgt):
     if mgt.startswith('magnet:'):
-        try:
-            mHash = re.search(r'xt=urn:btih:(.*)&dn=', mgt).group(1)
-        except:
-            mHash = re.search(r'xt=urn:btih:(.*)', mgt).group(1)
+        mHash = re.search(r'(?<=xt=urn:btih:)[a-zA-Z0-9]+', mgt).group(0)
         return mHash.lower()
 
 def get_hash_file(path):
