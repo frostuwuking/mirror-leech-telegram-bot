@@ -11,7 +11,7 @@ from telegram import ParseMode, InlineKeyboardMarkup
 from telegram.ext import CommandHandler
 
 from wserver import start_server_async
-from bot import bot, app, dispatcher, updater, botStartTime, IGNORE_PENDING_REQUESTS, IS_VPS, PORT, alive, web, OWNER_ID, AUTHORIZED_CHATS, LOGGER
+from bot import bot, app, dispatcher, updater, botStartTime, IGNORE_PENDING_REQUESTS, IS_VPS, PORT, alive, web, OWNER_ID, AUTHORIZED_CHATS, LOGGER, Interval, nox
 from bot.helper.ext_utils import fs_utils
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, editMessage, sendLogFile
@@ -63,7 +63,7 @@ def stats(update, context):
 def start(update, context):
     buttons = button_build.ButtonMaker()
     buttons.buildbutton("Repo", "https://www.github.com/anasty17/mirror-leech-telegram-bot")
-    buttons.buildbutton("Report Group", "https://t.me/mltbbugsreport")
+    buttons.buildbutton("Report Group", "https://t.me/+MwgSi5vmQEA2N2Vk")
     reply_markup = InlineKeyboardMarkup(buttons.build_menu(2))
     if CustomFilters.authorized_user(update) or CustomFilters.authorized_chat(update):
         start_string = f'''
@@ -72,18 +72,21 @@ Type /{BotCommands.HelpCommand} to get a list of available commands
 '''
         sendMarkup(start_string, context.bot, update, reply_markup)
     else:
-        sendMarkup('Not Authorized user', context.bot, update, reply_markup)
+        sendMarkup('Not Authorized user, deploy your own mirror-leech bot', context.bot, update, reply_markup)
 
 def restart(update, context):
     restart_message = sendMessage("Restarting...", context.bot, update)
-    fs_utils.clean_all()
+    if Interval:
+        Interval[0].cancel()
     alive.kill()
     process = psutil.Process(web.pid)
     for proc in process.children(recursive=True):
         proc.kill()
     process.kill()
+    fs_utils.clean_all()
     subprocess.run(["python3", "update.py"])
     # Save restart message object in order to reply to it after restarting
+    nox.kill()
     with open(".restartmsg", "w") as f:
         f.truncate(0)
         f.write(f"{restart_message.chat.id}\n{restart_message.message_id}\n")
