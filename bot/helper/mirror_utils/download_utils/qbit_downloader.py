@@ -15,7 +15,7 @@ from bot import download_dict, download_dict_lock, BASE_URL, dispatcher, get_cli
 from bot.helper.mirror_utils.status_utils.qbit_download_status import QbDownloadStatus
 from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
 from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, deleteMessage, sendStatusMessage, update_all_messages
-from bot.helper.ext_utils.bot_utils import setInterval, MirrorStatus, getDownloadByGid, get_readable_file_size, new_thread, get_readable_time
+from bot.helper.ext_utils.bot_utils import setInterval, MirrorStatus, getDownloadByGid, get_readable_file_size, get_readable_time
 from bot.helper.telegram_helper import button_build
 
 LOGGER = logging.getLogger(__name__)
@@ -37,7 +37,6 @@ class QbitTorrent:
         self.pincode = ""
         self.get_info = 0
 
-    @new_thread
     def add_torrent(self, link, dire, listener, qbitsel):
         self.listener = listener
         self.dire = dire
@@ -192,7 +191,7 @@ class QbitTorrent:
                             self.updater.cancel()
                     self.sizeChecked = True
             elif tor_info.state == "stalledDL":
-                if tor_info.downloaded >= tor_info.size and tor_info.progress >= 1:
+                if tor_info.downloaded >= tor_info.size and tor_info.progress > 0.99989:
                     self.client.torrents_recheck(torrent_hashes=self.ext_hash)
                 elif time.time() - self.stalled_time >= 999999999: # timeout after downloading metadata
                     self.client.torrents_pause(torrent_hashes=self.ext_hash)

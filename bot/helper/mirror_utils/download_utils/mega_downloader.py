@@ -1,14 +1,16 @@
-from bot import LOGGER, MEGA_API_KEY, download_dict_lock, download_dict, MEGA_EMAIL_ID, MEGA_PASSWORD
-import threading
-from mega import (MegaApi, MegaListener, MegaRequest, MegaTransfer, MegaError)
-from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, sendStatusMessage
 import os
+import random
+import string
+import threading
+
+from mega import (MegaApi, MegaListener, MegaRequest, MegaTransfer, MegaError)
+
+from bot import LOGGER, MEGA_API_KEY, download_dict_lock, download_dict, MEGA_EMAIL_ID, MEGA_PASSWORD
+from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, sendStatusMessage
 from bot.helper.ext_utils.bot_utils import new_thread, get_mega_link_type, get_readable_file_size
 from bot.helper.mirror_utils.status_utils.mega_download_status import MegaDownloadStatus
 from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
 from bot import MEGA_LIMIT, STOP_DUPLICATE, ZIP_UNZIP_LIMIT
-import random
-import string
 
 
 class MegaAppListener(MegaListener):
@@ -54,9 +56,6 @@ class MegaAppListener(MegaListener):
     def downloaded_bytes(self):
         return self.__bytes_transferred
 
-    def onRequestStart(self, api, request):
-        pass
-
     def onRequestFinish(self, api, request, error):
         if str(error).lower() != "no error":
             self.error = error.copy()
@@ -81,12 +80,10 @@ class MegaAppListener(MegaListener):
         self.error = error.toString()
         self.continue_event.set()
 
-    def onTransferStart(self, api: MegaApi, transfer: MegaTransfer):
-        pass
-
     def onTransferUpdate(self, api: MegaApi, transfer: MegaTransfer):
         if self.is_cancelled:
             api.cancelTransfer(transfer, None)
+            self.continue_event.set()
             return
         self.__speed = transfer.getSpeed()
         self.__bytes_transferred = transfer.getTransferredBytes()
@@ -96,7 +93,7 @@ class MegaAppListener(MegaListener):
             if self.is_cancelled:
                 self.continue_event.set()
             elif transfer.isFinished() and (transfer.isFolderTransfer() or transfer.getFileName() == self.name):
-                self.listener.onDownloadComplete()
+                threading.Thread(target=self.listener.onDownloadComplete).start()
                 self.continue_event.set()
         except Exception as e:
             LOGGER.error(e)
@@ -106,7 +103,6 @@ class MegaAppListener(MegaListener):
         state = transfer.getState()
         errStr = error.toString()
         LOGGER.error(f'Mega download error in file {transfer} {filen}: {error}')
-
         if state in [1, 4]:
             # Sometimes MEGA (offical client) can't stream a node either and raises a temp failed error.
             # Don't break the transfer queue if transfer's in queued (1) or retrying (4) state [causes seg fault]
@@ -116,6 +112,7 @@ class MegaAppListener(MegaListener):
         if not self.is_cancelled:
             self.is_cancelled = True
             self.listener.onDownloadError(f"TransferTempError: {errStr} ({filen})")
+            self.continue_event.set()
 
     def cancel_download(self):
         self.is_cancelled = True
@@ -134,17 +131,18 @@ class AsyncExecutor:
 
 listeners = []
 
+
 class MegaDownloadHelper:
 
     @staticmethod
     @new_thread
     def add_download(mega_link: str, path: str, listener):
         executor = AsyncExecutor()
-        api = MegaApi(MEGA_API_KEY, None, None, 'telegram-mirror-bot')
-        global listeners
+        api = MegaApi(MEGA_API_KEY, None, None, 'mirror-leech-telegram-bot')
         mega_listener = MegaAppListener(executor.continue_event, listener)
-        listeners.append(mega_listener)
+        global listeners
         api.addListener(mega_listener)
+        listeners.append(mega_listener)
         if MEGA_EMAIL_ID is not None and MEGA_PASSWORD is not None:
             executor.do(api.login, (MEGA_EMAIL_ID, MEGA_PASSWORD))
         link_type = get_mega_link_type(mega_link)
@@ -154,7 +152,7 @@ class MegaDownloadHelper:
             node = mega_listener.public_node
         else:
             LOGGER.info("Folder. If your download didn't start, then check your link if it's available to download")
-            folder_api = MegaApi(MEGA_API_KEY,None,None,'TgBot')
+            folder_api = MegaApi(MEGA_API_KEY, None, None, 'mltb')
             folder_api.addListener(mega_listener)
             executor.do(folder_api.loginToFolder, (mega_link,))
             node = folder_api.authorizeNode(mega_listener.node)
@@ -171,7 +169,6 @@ class MegaDownloadHelper:
                 if smsg:
                     msg1 = "File/Folder is already available in Drive.\nHere are the search results:"
                     sendMarkup(msg1, listener.bot, listener.update, button)
-                    executor.continue_event.set()
                     return
         limit = None
         if ZIP_UNZIP_LIMIT is not None and (listener.isZip or listener.extract):
@@ -185,7 +182,6 @@ class MegaDownloadHelper:
             size = api.getSize(node)
             if size > limit * 1024**3:
                 sendMessage(msg3, listener.bot, listener.update)
-                executor.continue_event.set()
                 return
         with download_dict_lock:
             download_dict[listener.uid] = MegaDownloadStatus(mega_listener, listener)
@@ -193,4 +189,4 @@ class MegaDownloadHelper:
         gid = ''.join(random.SystemRandom().choices(string.ascii_letters + string.digits, k=8))
         mega_listener.setValues(node.getName(), api.getSize(node), gid)
         sendStatusMessage(listener.update, listener.bot)
-        executor.do(api.startDownload,(node,path))
+        executor.do(api.startDownload, (node, path))
