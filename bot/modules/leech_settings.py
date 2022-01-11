@@ -1,8 +1,8 @@
 # Leech Settings V2 Implement By - @VarnaX-279
 
 import os
-import threading
 
+from threading import Thread
 from PIL import Image
 from telegram.ext import CommandHandler, CallbackQueryHandler
 from telegram import InlineKeyboardMarkup
@@ -54,7 +54,7 @@ def editLeechType(message, query):
 def leechSet(update, context):
     msg, button = getleechinfo(update.message.from_user)
     choose_msg = sendMarkup(msg, context.bot, update, button)
-    threading.Thread(target=auto_delete_message, args=(context.bot, update.message, choose_msg)).start()
+    Thread(target=auto_delete_message, args=(context.bot, update.message, choose_msg)).start()
 
 def setLeechType(update, context):
     query = update.callback_query
@@ -111,7 +111,8 @@ def setThumb(update, context):
         os.remove(photo_dir)
         if DB_URI is not None:
             DbManger().user_save_thumb(user_id, des_dir)
-        sendMessage(f"Custom thumbnail saved for <a href='tg://user?id={user_id}'>{update.message.from_user.full_name}</a> .", context.bot, update)
+        msg = f"Custom thumbnail saved for <a href='tg://user?id={user_id}'>{update.message.from_user.full_name}</a>."
+        sendMessage(msg, context.bot, update)
     else:
         sendMessage("Reply to a photo to save custom thumbnail.", context.bot, update)
 
