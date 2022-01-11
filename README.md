@@ -1,6 +1,15 @@
 # Heroku Deploy
 
-**Important Note**: Use heroku branch to avoid suspension OR deploy master branch twice with same app name(check helper.sh for help). If you are using heroku branch and not using specific `UPSTREAM_REPO` so you don't need to deploy again for update, only restart is enough. To stay up to date don't fill `UPSTREAM_REPO` on each dyno restart you will get lastest commits or fill `UPSTREAM_REPO` by your fork public/private link and fetch manually then you can update your bot by restart cmd and dyno restart.
+**Important Notes**
+1. This Branch only for deploying, generate all your private files from master branch.
+2. If you want to edit aria.sh or qBittorrent.conf or any other file in bot folder you must add `UPSTREAM_REPO` of your edited public or private fork else you will get official code all your will not take effect.
+3. Use this branch to avoid suspension `OR` deploy master branch twice with same app name (check helper.sh for help). To stay up to date don't fill `UPSTREAM_REPO`, on each `dyno restart` you will get lastest commits from official repository or fill `UPSTREAM_REPO` by your public/private fork link and fetch manually then you can update your bot by `restart cmd` and `dyno restart`.
+4. Don't delete .gitignore file.
+5. Read all variables definitions from master branch readme.
+6. Don't edit variables from Heroku, if you want to edit simply do it in config.env from gists if using gists or from private repository if added in it, then restart your app.
+7. Keep the programmer inside you away and follow the steps.
+
+------
 
 ## With CLI
 
@@ -9,6 +18,7 @@
 git clone https://github.com/anasty17/mirror-leech-telegram-bot mirrorbot/ && cd mirrorbot
 ```
 - Switch to heroku branch
+  - **NOTE**: Don't commit changes in master branch. If you have committed your changes in master branch and after that you switched to heroku branch, the new added files will `NOT` appear in heroku branch.
 ```
 git checkout heroku
 ```
@@ -40,13 +50,29 @@ heroku stack:set container
 ```
 git push heroku heroku:master -f
 ```
+
+------
+
+### Extras
+
+- To heroku-postgresql database
+```
+heroku addons:create heroku-postgresql
+```
 - To delete the app
 ```
 heroku apps:destroy YOURAPPNAME
 ```
 - To restart dyno
 ```
+heroku restart
+```
+- To turn off dyno
+```
 heroku ps:scale web=0
+```
+- To turn on dyno
+```
 heroku ps:scale web=1
 ```
 - To set heroku variable
@@ -57,6 +83,8 @@ heroku config:set VARNAME=VARTEXT
 ```
 heroku logs -t
 ```
+
+------
 
 ## With Github Workflow
 
@@ -91,6 +119,3 @@ heroku logs -t
 5. Then click on Run workflow
 
 ![Run Workflow](https://telegra.ph/file/f44c7465d58f9f046328b.png)
-
-**NOTE**: Don't change/edit variables from Heroku if you want to change/edit do it in config.env from your gist, after it just restart your Heroku app.
-
