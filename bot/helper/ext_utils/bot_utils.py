@@ -1,17 +1,15 @@
-import re
-
+from re import match, findall
 from threading import Thread, Event
 from time import time
 from math import ceil
-from psutil import virtual_memory, cpu_percent
-from shutil import disk_usage
-from requests import head
+from psutil import virtual_memory, cpu_percent, disk_usage
+from requests import head as rhead
 from urllib.request import urlopen
-from bot.helper.telegram_helper.bot_commands import BotCommands
-from bot import dispatcher, download_dict, download_dict_lock, STATUS_LIMIT, botStartTime
 from telegram import InlineKeyboardMarkup
-from telegram.ext import CallbackQueryHandler
-from bot.helper.telegram_helper import button_build, message_utils
+
+from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot import download_dict, download_dict_lock, STATUS_LIMIT, botStartTime
+from bot.helper.telegram_helper.button_build import ButtonMaker
 
 MAGNET_REGEX = r"magnet:\?xt=urn:btih:[a-zA-Z0-9]*"
 
@@ -166,7 +164,7 @@ def get_readable_message():
             msg += "\n\n"
             if STATUS_LIMIT is not None and index == STATUS_LIMIT:
                 break
-        total, used, free = disk_usage('.')
+        total, used, free, _ = disk_usage('.')
         free = get_readable_file_size(free)
         currentTime = get_readable_time(time() - botStartTime)
         bmsg = f"<b>CPU:</b> {cpu_percent()}% | <b>FREE:</b> {free}"
@@ -188,18 +186,14 @@ def get_readable_message():
         bmsg += f"\n<b>DL:</b> {dlspeed}/s | <b>UL:</b> {ulspeed}/s"
         if STATUS_LIMIT is not None and tasks > STATUS_LIMIT:
             msg += f"<b>Page:</b> {PAGE_NO}/{pages} | <b>Tasks:</b> {tasks}\n"
-            buttons = button_build.ButtonMaker()
+            buttons = ButtonMaker()
             buttons.sbutton("Previous", "status pre")
             buttons.sbutton("Next", "status nex")
             button = InlineKeyboardMarkup(buttons.build_menu(2))
             return msg + bmsg, button
         return msg + bmsg, ""
 
-def turn(update, context):
-    query = update.callback_query
-    data = query.data
-    data = data.split(' ')
-    query.answer()
+def turn(data):
     try:
         with download_dict_lock:
             global COUNT, PAGE_NO
@@ -217,9 +211,9 @@ def turn(update, context):
                 else:
                     COUNT -= STATUS_LIMIT
                     PAGE_NO -= 1
-        message_utils.update_all_messages()
+        return True
     except:
-        query.message.delete()
+        return False
 
 def get_readable_time(seconds: int) -> str:
     result = ''
@@ -240,14 +234,14 @@ def get_readable_time(seconds: int) -> str:
     return result
 
 def is_url(url: str):
-    url = re.findall(URL_REGEX, url)
+    url = findall(URL_REGEX, url)
     return bool(url)
 
 def is_gdrive_link(url: str):
     return "drive.google.com" in url
 
 def is_gdtot_link(url: str):
-    url = re.match(r'https?://.*\.gdtot\.\S+', url)
+    url = match(r'https?://.*\.gdtot\.\S+', url)
     return bool(url)
 
 def is_mega_link(url: str):
@@ -263,7 +257,7 @@ def get_mega_link_type(url: str):
     return "file"
 
 def is_magnet(url: str):
-    magnet = re.findall(MAGNET_REGEX, url)
+    magnet = findall(MAGNET_REGEX, url)
     return bool(magnet)
 
 def new_thread(fn):
@@ -280,7 +274,7 @@ def new_thread(fn):
 
 def get_content_type(link: str):
     try:
-        res = head(link, allow_redirects=True, timeout=5)
+        res = rhead(link, allow_redirects=True, timeout=5)
         content_type = res.headers.get('content-type')
     except:
         content_type = None
@@ -294,5 +288,3 @@ def get_content_type(link: str):
             content_type = None
     return content_type
 
-status_handler = CallbackQueryHandler(turn, pattern="status", run_async=True)
-dispatcher.add_handler(status_handler)

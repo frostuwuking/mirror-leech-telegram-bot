@@ -1,11 +1,11 @@
 import requests
-import os
-import re
-import time
 
+from re import match, search, split as resplit
+from time import sleep, time
+from os import path as ospath, remove as osremove, listdir, walk
 from shutil import rmtree
 from threading import Thread
-from subprocess import run
+from subprocess import run as srun
 from pathlib import PurePath
 from urllib.parse import quote
 from telegram.ext import CommandHandler
@@ -14,7 +14,8 @@ from telegram import InlineKeyboardMarkup
 from bot import Interval, INDEX_URL, BUTTON_FOUR_NAME, BUTTON_FOUR_URL, BUTTON_FIVE_NAME, BUTTON_FIVE_URL, \
                 BUTTON_SIX_NAME, BUTTON_SIX_URL, BLOCK_MEGA_FOLDER, BLOCK_MEGA_LINKS, VIEW_LINK, aria2, QB_SEED, \
                 dispatcher, DOWNLOAD_DIR, download_dict, download_dict_lock, TG_SPLIT_SIZE, LOGGER
-from bot.helper.ext_utils import fs_utils, bot_utils
+from bot.helper.ext_utils.bot_utils import is_url, is_magnet, is_gdtot_link, is_mega_link, is_gdrive_link, get_content_type, get_mega_link_type
+from bot.helper.ext_utils.fs_utils import get_base_name, get_path_size, split as fssplit, clean_download
 from bot.helper.ext_utils.shortenurl import short_url
 from bot.helper.ext_utils.exceptions import DirectDownloadLinkException, NotSupportedExtractionArchive
 from bot.helper.mirror_utils.download_utils.aria2_download import add_aria2c_download
@@ -28,11 +29,12 @@ from bot.helper.mirror_utils.status_utils.zip_status import ZipStatus
 from bot.helper.mirror_utils.status_utils.split_status import SplitStatus
 from bot.helper.mirror_utils.status_utils.upload_status import UploadStatus
 from bot.helper.mirror_utils.status_utils.tg_upload_status import TgUploadStatus
-from bot.helper.mirror_utils.upload_utils import gdriveTools, pyrogramEngine
+from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
+from bot.helper.mirror_utils.upload_utils.pyrogramEngine import TgUploader
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.message_utils import sendMessage, sendMarkup, delete_all_messages, update_all_messages
-from bot.helper.telegram_helper import button_build
+from bot.helper.telegram_helper.button_build import ButtonMaker
 
 
 class MirrorListener:
@@ -65,7 +67,7 @@ class MirrorListener:
             gid = download.gid()
             size = download.size_raw()
             if name == "None" or self.isQbit:
-                name = os.listdir(f'{DOWNLOAD_DIR}{self.uid}')[-1]
+                name = listdir(f'{DOWNLOAD_DIR}{self.uid}')[-1]
             m_path = f'{DOWNLOAD_DIR}{self.uid}/{name}'
         if self.isZip:
             try:
@@ -77,61 +79,62 @@ class MirrorListener:
                 if pswd is not None:
                     if self.isLeech and int(size) > TG_SPLIT_SIZE:
                         path = m_path + ".zip"
-                        run(["7z", f"-v{TG_SPLIT_SIZE}b", "a", "-mx=0", f"-p{pswd}", path, m_path])
+                        srun(["7z", f"-v{TG_SPLIT_SIZE}b", "a", "-mx=0", f"-p{pswd}", path, m_path])
                     else:
-                        run(["7z", "a", "-mx=0", f"-p{pswd}", path, m_path])
+                        srun(["7z", "a", "-mx=0", f"-p{pswd}", path, m_path])
                 elif self.isLeech and int(size) > TG_SPLIT_SIZE:
                     path = m_path + ".zip"
-                    run(["7z", f"-v{TG_SPLIT_SIZE}b", "a", "-mx=0", path, m_path])
+                    srun(["7z", f"-v{TG_SPLIT_SIZE}b", "a", "-mx=0", path, m_path])
                 else:
-                    run(["7z", "a", "-mx=0", path, m_path])
+                    srun(["7z", "a", "-mx=0", path, m_path])
             except FileNotFoundError:
                 LOGGER.info('File to archive not found!')
                 self.onUploadError('Internal error occurred!!')
                 return
-            try:
-                rmtree(m_path)
-            except:
-                os.remove(m_path)
+            if not self.isQbit or not QB_SEED or self.isLeech:
+                try:
+                    rmtree(m_path)
+                except:
+                    osremove(m_path)
         elif self.extract:
             try:
-                if os.path.isfile(m_path):
-                    path = fs_utils.get_base_name(m_path)
+                if ospath.isfile(m_path):
+                    path = get_base_name(m_path)
                 LOGGER.info(f"Extracting: {name}")
                 with download_dict_lock:
                     download_dict[self.uid] = ExtractStatus(name, m_path, size)
                 pswd = self.pswd
-                if os.path.isdir(m_path):
-                    for dirpath, subdir, files in os.walk(m_path, topdown=False):
-                        for filee in files:
-                            if re.search(r'\.part0*1.rar$', filee) or re.search(r'\.7z.0*1$', filee) \
-                               or (filee.endswith(".rar") and not re.search(r'\.part\d+.rar$', filee)) \
-                               or filee.endswith(".zip") or re.search(r'\.zip.0*1$', filee):
-                                m_path = os.path.join(dirpath, filee)
+                if ospath.isdir(m_path):
+                    for dirpath, subdir, files in walk(m_path, topdown=False):
+                        for file_ in files:
+                            if search(r'\.part0*1.rar$', file_) or search(r'\.7z.0*1$', file_) \
+                               or (file_.endswith(".rar") and not search(r'\.part\d+.rar$', file_)) \
+                               or file_.endswith(".zip") or search(r'\.zip.0*1$', file_):
+                                m_path = ospath.join(dirpath, file_)
                                 if pswd is not None:
-                                    result = run(["7z", "x", f"-p{pswd}", m_path, f"-o{dirpath}", "-aot"])
+                                    result = srun(["7z", "x", f"-p{pswd}", m_path, f"-o{dirpath}", "-aot"])
                                 else:
-                                    result = run(["7z", "x", m_path, f"-o{dirpath}", "-aot"])
+                                    result = srun(["7z", "x", m_path, f"-o{dirpath}", "-aot"])
                                 if result.returncode != 0:
-                                    LOGGER.warning('Unable to extract archive!')
-                        for filee in files:
-                            if filee.endswith(".rar") or re.search(r'\.r\d+$', filee) \
-                               or re.search(r'\.7z.\d+$', filee) or re.search(r'\.z\d+$', filee) \
-                               or re.search(r'\.zip.\d+$', filee) or filee.endswith(".zip"):
-                                del_path = os.path.join(dirpath, filee)
-                                os.remove(del_path)
+                                    LOGGER.error('Unable to extract archive!')
+                        for file_ in files:
+                            if file_.endswith(".rar") or search(r'\.r\d+$', file_) \
+                               or search(r'\.7z.\d+$', file_) or search(r'\.z\d+$', file_) \
+                               or search(r'\.zip.\d+$', file_) or file_.endswith(".zip"):
+                                del_path = ospath.join(dirpath, file_)
+                                osremove(del_path)
                     path = f'{DOWNLOAD_DIR}{self.uid}/{name}'
                 else:
                     if pswd is not None:
-                        result = run(["bash", "pextract", m_path, pswd])
+                        result = srun(["bash", "pextract", m_path, pswd])
                     else:
-                        result = run(["bash", "extract", m_path])
+                        result = srun(["bash", "extract", m_path])
                     if result.returncode == 0:
                         LOGGER.info(f"Extract Path: {path}")
-                        os.remove(m_path)
+                        osremove(m_path)
                         LOGGER.info(f"Deleting archive: {m_path}")
                     else:
-                        LOGGER.warning('Unable to extract archive! Uploading anyway')
+                        LOGGER.error('Unable to extract archive! Uploading anyway')
                         path = f'{DOWNLOAD_DIR}{self.uid}/{name}'
             except NotSupportedExtractionArchive:
                 LOGGER.info("Not any valid archive, uploading file as it is.")
@@ -140,32 +143,33 @@ class MirrorListener:
             path = f'{DOWNLOAD_DIR}{self.uid}/{name}'
         up_name = PurePath(path).name
         up_path = f'{DOWNLOAD_DIR}{self.uid}/{up_name}'
-        size = fs_utils.get_path_size(f'{DOWNLOAD_DIR}{self.uid}')
         if self.isLeech and not self.isZip:
             checked = False
-            for dirpath, subdir, files in os.walk(f'{DOWNLOAD_DIR}{self.uid}', topdown=False):
-                for filee in files:
-                    f_path = os.path.join(dirpath, filee)
-                    f_size = os.path.getsize(f_path)
+            for dirpath, subdir, files in walk(f'{DOWNLOAD_DIR}{self.uid}', topdown=False):
+                for file_ in files:
+                    f_path = ospath.join(dirpath, file_)
+                    f_size = ospath.getsize(f_path)
                     if int(f_size) > TG_SPLIT_SIZE:
                         if not checked:
                             checked = True
                             with download_dict_lock:
                                 download_dict[self.uid] = SplitStatus(up_name, up_path, size)
                             LOGGER.info(f"Splitting: {up_name}")
-                        fs_utils.split(f_path, f_size, filee, dirpath, TG_SPLIT_SIZE)
-                        os.remove(f_path)
+                        fssplit(f_path, f_size, file_, dirpath, TG_SPLIT_SIZE)
+                        osremove(f_path)
         if self.isLeech:
+            size = get_path_size(f'{DOWNLOAD_DIR}{self.uid}')
             LOGGER.info(f"Leech Name: {up_name}")
-            tg = pyrogramEngine.TgUploader(up_name, self)
+            tg = TgUploader(up_name, self)
             tg_upload_status = TgUploadStatus(tg, size, gid, self)
             with download_dict_lock:
                 download_dict[self.uid] = tg_upload_status
             update_all_messages()
             tg.upload()
         else:
+            size = get_path_size(up_path)
             LOGGER.info(f"Upload Name: {up_name}")
-            drive = gdriveTools.GoogleDriveHelper(up_name, self)
+            drive = GoogleDriveHelper(up_name, self)
             upload_status = UploadStatus(drive, size, gid, self)
             with download_dict_lock:
                 download_dict[self.uid] = upload_status
@@ -173,13 +177,12 @@ class MirrorListener:
             drive.upload(up_name)
 
     def onDownloadError(self, error):
-        error = error.replace('<', ' ')
-        error = error.replace('>', ' ')
+        error = error.replace('<', ' ').replace('>', ' ')
         with download_dict_lock:
             try:
                 download = download_dict[self.uid]
                 del download_dict[self.uid]
-                fs_utils.clean_download(download.path())
+                clean_download(download.path())
             except Exception as e:
                 LOGGER.error(str(e))
             count = len(download_dict)
@@ -190,25 +193,11 @@ class MirrorListener:
         else:
             update_all_messages()
 
-    def onUploadComplete(self, link: str, size, files, folders, typ):
+    def onUploadComplete(self, link: str, size, files, folders, typ, name: str):
         if self.isLeech:
-            if self.isQbit and QB_SEED:
-                pass
-            else:
-                with download_dict_lock:
-                    try:
-                        fs_utils.clean_download(download_dict[self.uid].path())
-                    except FileNotFoundError:
-                        pass
-                    del download_dict[self.uid]
-                    dcount = len(download_dict)
-                if dcount == 0:
-                    self.clean()
-                else:
-                    update_all_messages()
             count = len(files)
-            msg = f'<b>Name: </b><code>{link}</code>\n\n'
-            msg += f'<b>Size: </b>{bot_utils.get_readable_file_size(size)}\n'
+            msg = f'<b>Name: </b><code>{name}</code>\n\n'
+            msg += f'<b>Size: </b>{size}\n'
             msg += f'<b>Total Files: </b>{count}'
             if typ != 0:
                 msg += f'\n<b>Corrupted Files: </b>{typ}'
@@ -223,28 +212,38 @@ class MirrorListener:
                     link = f"https://t.me/c/{chat_id}/{msg_id}"
                     fmsg += f"{index}. <a href='{link}'>{item}</a>\n"
                     if len(fmsg.encode('utf-8') + msg.encode('utf-8')) > 4000:
-                        time.sleep(2)
+                        sleep(1.5)
                         sendMessage(msg + fmsg, self.bot, self.update)
                         fmsg = ''
                 if fmsg != '':
-                    time.sleep(2)
+                    sleep(1.5)
                     sendMessage(msg + fmsg, self.bot, self.update)
-            return
-
-        with download_dict_lock:
-            msg = f'<b>Name: </b><code>{download_dict[self.uid].name()}</code>\n\n<b>Size: </b>{size}'
+            try:
+                clean_download(f'{DOWNLOAD_DIR}{self.uid}')
+            except FileNotFoundError:
+                pass
+            with download_dict_lock:
+                del download_dict[self.uid]
+                dcount = len(download_dict)
+            if dcount == 0:
+                self.clean()
+            else:
+                update_all_messages()
+        else:
+            msg = f'<b>Name: </b><code>{name}</code>\n\n<b>Size: </b>{size}'
             msg += f'\n\n<b>Type: </b>{typ}'
-            if os.path.isdir(f'{DOWNLOAD_DIR}/{self.uid}/{download_dict[self.uid].name()}'):
+            if ospath.isdir(f'{DOWNLOAD_DIR}{self.uid}/{name}'):
                 msg += f'\n<b>SubFolders: </b>{folders}'
                 msg += f'\n<b>Files: </b>{files}'
-            buttons = button_build.ButtonMaker()
+            msg += f'\n\n<b>cc: </b>{self.tag}'
+            buttons = ButtonMaker()
             link = short_url(link)
             buttons.buildbutton("☁️ Drive Link", link)
-            LOGGER.info(f'Done Uploading {download_dict[self.uid].name()}')
+            LOGGER.info(f'Done Uploading {name}')
             if INDEX_URL is not None:
-                url_path = requests.utils.quote(f'{download_dict[self.uid].name()}')
+                url_path = requests.utils.quote(f'{name}')
                 share_url = f'{INDEX_URL}/{url_path}'
-                if os.path.isdir(f'{DOWNLOAD_DIR}/{self.uid}/{download_dict[self.uid].name()}'):
+                if ospath.isdir(f'{DOWNLOAD_DIR}/{self.uid}/{name}'):
                     share_url += '/'
                     share_url = short_url(share_url)
                     buttons.buildbutton("⚡ Index Link", share_url)
@@ -261,28 +260,32 @@ class MirrorListener:
                 buttons.buildbutton(f"{BUTTON_FIVE_NAME}", f"{BUTTON_FIVE_URL}")
             if BUTTON_SIX_NAME is not None and BUTTON_SIX_URL is not None:
                 buttons.buildbutton(f"{BUTTON_SIX_NAME}", f"{BUTTON_SIX_URL}")
-        msg += f'\n\n<b>cc: </b>{self.tag}'
-        if self.isQbit and QB_SEED:
-           return sendMarkup(msg, self.bot, self.update, InlineKeyboardMarkup(buttons.build_menu(2)))
-        else:
-            with download_dict_lock:
+            if self.isQbit and QB_SEED and not self.extract:
+               if self.isZip:
+                   try:
+                       osremove(f'{DOWNLOAD_DIR}{self.uid}/{name}')
+                   except:
+                       pass
+               return sendMarkup(msg, self.bot, self.update, InlineKeyboardMarkup(buttons.build_menu(2)))
+            else:
                 try:
-                    fs_utils.clean_download(download_dict[self.uid].path())
+                    clean_download(f'{DOWNLOAD_DIR}{self.uid}')
                 except FileNotFoundError:
                     pass
-                del download_dict[self.uid]
-                count = len(download_dict)
-            sendMarkup(msg, self.bot, self.update, InlineKeyboardMarkup(buttons.build_menu(2)))
-            if count == 0:
-                self.clean()
-            else:
-                update_all_messages()
+                with download_dict_lock:
+                    del download_dict[self.uid]
+                    count = len(download_dict)
+                sendMarkup(msg, self.bot, self.update, InlineKeyboardMarkup(buttons.build_menu(2)))
+                if count == 0:
+                    self.clean()
+                else:
+                    update_all_messages()
 
     def onUploadError(self, error):
         e_str = error.replace('<', '').replace('>', '')
         with download_dict_lock:
             try:
-                fs_utils.clean_download(download_dict[self.uid].path())
+                clean_download(download_dict[self.uid].path())
             except FileNotFoundError:
                 pass
             del download_dict[self.message.message_id]
@@ -314,7 +317,7 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
         name = name.strip()
     except IndexError:
         name = ''
-    link = re.split(r"pswd:| \|", link)[0]
+    link = resplit(r"pswd:| \|", link)[0]
     link = link.strip()
     pswdMsg = mesg[0].split(' pswd: ')
     if len(pswdMsg) > 1:
@@ -334,8 +337,8 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
                 file = i
                 break
         if (
-            not bot_utils.is_url(link)
-            and not bot_utils.is_magnet(link)
+            not is_url(link)
+            and not is_magnet(link)
             or len(link) == 0
         ):
             if not reply_to.from_user.is_bot:
@@ -346,10 +349,10 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
 
             if file is None:
                 reply_text = reply_to.text
-                if bot_utils.is_url(reply_text) or bot_utils.is_magnet(reply_text):
+                if is_url(reply_text) or is_magnet(reply_text):
                     link = reply_text.strip()
             elif isQbit:
-                file_name = str(time.time()).replace(".", "") + ".torrent"
+                file_name = str(time()).replace(".", "") + ".torrent"
                 link = file.get_file().download(custom_path=file_name)
             elif file.mime_type != "application/x-bittorrent":
                 listener = MirrorListener(bot, update, isZip, extract, isQbit, isLeech, pswd, tag)
@@ -369,7 +372,7 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
         except IndexError:
             pass
 
-    if not bot_utils.is_url(link) and not bot_utils.is_magnet(link) and not os.path.exists(link):
+    if not is_url(link) and not is_magnet(link) and not ospath.exists(link):
         help_msg = "<b>Send link along with command line:</b>"
         help_msg += "\n<code>/command</code> {link} |newname pswd: mypassword [𝚣𝚒𝚙/𝚞𝚗𝚣𝚒𝚙]"
         help_msg += "\n\n<b>By replying to link or file:</b>"
@@ -381,12 +384,12 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
         return sendMessage(help_msg, bot, update)
 
     LOGGER.info(link)
-    gdtot_link = bot_utils.is_gdtot_link(link)
+    gdtot_link = is_gdtot_link(link)
 
-    if not bot_utils.is_mega_link(link) and not isQbit and not bot_utils.is_magnet(link) \
-         and not os.path.exists(link) and not bot_utils.is_gdrive_link(link):
-        content_type = bot_utils.get_content_type(link)
-        if content_type is None or re.match(r'text/html|text/plain', content_type):
+    if not is_mega_link(link) and not isQbit and not is_magnet(link) \
+       and not ospath.exists(link) and not is_gdrive_link(link) and not link.endswith('.torrent'):
+        content_type = get_content_type(link)
+        if content_type is None or match(r'text/html|text/plain', content_type):
             try:
                 link = direct_link_generator(link)
                 LOGGER.info(f"Generated link: {link}")
@@ -394,28 +397,34 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
                 LOGGER.info(str(e))
                 if str(e).startswith('ERROR:'):
                     return sendMessage(str(e), bot, update)
-    elif isQbit and not bot_utils.is_magnet(link) and not os.path.exists(link):
-        content_type = bot_utils.get_content_type(link)
-        if content_type is None or re.match(r'application/x-bittorrent|application/octet-stream', content_type):
+    elif isQbit and not is_magnet(link) and not ospath.exists(link):
+        if link.endswith('.torrent'):
+            content_type = None
+        else:
+            content_type = get_content_type(link)
+        if content_type is None or match(r'application/x-bittorrent|application/octet-stream', content_type):
             try:
                 resp = requests.get(link, timeout=10)
                 if resp.status_code == 200:
-                    file_name = str(time.time()).replace(".", "") + ".torrent"
+                    file_name = str(time()).replace(".", "") + ".torrent"
                     open(file_name, "wb").write(resp.content)
                     link = f"{file_name}"
                 else:
                     return sendMessage(f"ERROR: link got HTTP response: {resp.status_code}", bot, update)
             except Exception as e:
-                LOGGER.error(str(e))
                 error = str(e).replace('<', ' ').replace('>', ' ')
-                return sendMessage(error, bot, update)
+                if error.startswith('No connection adapters were found for'):
+                    link = error.split("'")[1]
+                else:
+                    LOGGER.error(str(e))
+                    return sendMessage(tag + " " + error, bot, update)
         else:
             msg = "Qb commands for torrents only. if you are trying to dowload torrent then report."
             return sendMessage(msg, bot, update)
 
     listener = MirrorListener(bot, update, isZip, extract, isQbit, isLeech, pswd, tag)
 
-    if bot_utils.is_gdrive_link(link):
+    if is_gdrive_link(link):
         if not isZip and not extract and not isLeech:
             gmsg = f"Use /{BotCommands.CloneCommand} to clone Google Drive file/folder\n\n"
             gmsg += f"Use /{BotCommands.ZipMirrorCommand} to make zip of Google Drive folder\n\n"
@@ -423,17 +432,17 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
             return sendMessage(gmsg, bot, update)
         Thread(target=add_gd_download, args=(link, listener, gdtot_link)).start()
 
-    elif bot_utils.is_mega_link(link):
+    elif is_mega_link(link):
         if BLOCK_MEGA_LINKS:
             sendMessage("Mega links are blocked!", bot, update)
             return
-        link_type = bot_utils.get_mega_link_type(link)
+        link_type = get_mega_link_type(link)
         if link_type == "folder" and BLOCK_MEGA_FOLDER:
             sendMessage("Mega folder are blocked!", bot, update)
         else:
             Thread(target=add_mega_download, args=(link, f'{DOWNLOAD_DIR}{listener.uid}/', listener)).start()
 
-    elif isQbit and (bot_utils.is_magnet(link) or os.path.exists(link)):
+    elif isQbit and (is_magnet(link) or ospath.exists(link)):
         Thread(target=add_qb_torrent, args=(link, f'{DOWNLOAD_DIR}{listener.uid}/', listener, qbitsel)).start()
 
     else:
