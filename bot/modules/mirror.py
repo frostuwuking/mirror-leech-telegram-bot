@@ -201,12 +201,12 @@ class MirrorListener:
             msg += f'\n<b>Total Files: </b>{count}'
             if typ != 0:
                 msg += f'\n<b>Corrupted Files: </b>{typ}'
-            msg += f'\n<b>cc: </b>{self.tag}'
+            msg += f'\n<b>cc: </b>{self.tag}\n\n'
             if self.message.chat.type == 'private':
                 sendMessage(msg, self.bot, self.update)
             else:
                 chat_id = str(self.message.chat.id)[4:]
-                fmsg = '\n\n'
+                fmsg = ''
                 for index, item in enumerate(list(files), start=1):
                     msg_id = files[item]
                     link = f"https://t.me/c/{chat_id}/{msg_id}"
@@ -306,7 +306,7 @@ def _mirror(bot, update, isZip=False, extract=False, isQbit=False, isLeech=False
             qbitsel = True
             message_args = mesg[0].split(' ', maxsplit=2)
             link = message_args[2].strip()
-        if link.startswith("|") or link.startswith("pswd: "):
+        if link.startswith(("|", "pswd: ")):
             link = ''
     except IndexError:
         link = ''
